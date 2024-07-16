@@ -7,7 +7,9 @@ import torch
 import torch.nn as nn
 import transformers
 
+from typing import List
 from .quantizer import Quantizer
+from ..qbase import QBase, find_module
 
 
 logger = getLogger(__name__)
@@ -203,4 +205,50 @@ class GPTQ:
         torch.cuda.empty_cache()
 
 
-__all__ = ["GPTQ"]
+class WapperGPTQ(QBase):
+    def __init__(self, layers: nn.ModuleList, 
+                 inside_layer_modules=List[List[str]], 
+                 **kwargs):
+        super(WapperGPTQ, self).__init__(layers,
+                                         inside_layer_modules, 
+                                         **kwargs)
+        assert len(self.layers) == 1
+        self.nbits = kwargs['nbits']
+        self.gptq = dict()
+
+    @property
+    def quant_stages(self):
+        stages = []
+        for ts in self.inside_layers_modules:
+            for t in ts:
+                stages.append(['0.'+t])
+        return stages
+
+    def register_forward_hooks(self, m: nn.Module, name):
+        self.gptq[name] = GPTQ(find_module(self.layers, name))
+        self.gptq[name].quantizer.configure(
+            self.nbits,
+            perchannel=True,
+            sym=False,
+            mse=False,
+        )
+
+        def add_batch(name):
+            def tmp(_, inp, out):
+                self.gptq[name].add_batch(inp[0].data, out.data)  # noqa: F821
+
+            return tmp
+        self.hooks.append(m.register_forward_hook(add_batch(name)))
+
+    def do_quant(self):
+        for n in self.gptq.keys():
+            logger.info(f"Quantizing {n} ...")
+            self.gptq[n].fasterquant(
+                group_size=-1,
+            )
+        
+    def free(self):
+        self.gptq = dict()
+        torch.cuda.empty_cache()
+
+__all__ = ["WapperGPTQ"]

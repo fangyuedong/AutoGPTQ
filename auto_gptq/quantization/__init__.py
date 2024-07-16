@@ -7,5 +7,6 @@ from .config import (
     QUANT_METHOD_FIELD,
     BaseQuantizeConfig,
 )
-from .gptq import GPTQ
-from .quantizer import Quantizer, quantize
+# from .gptq import GPTQ
+# from .quantizer import Quantizer, quantize
+from .gptq.gptq import WapperGPTQ
